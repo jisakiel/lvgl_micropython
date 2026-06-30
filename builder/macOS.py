@@ -70,7 +70,7 @@ def submodules():
         raise RuntimeError('libffi needs to be installed using Homebrew.')
 
     ldflags = [f'-L{path}/libffi/lib']
-    cflags = [f'-I{path}/libffi/include']
+    cflags = ['-fomit-frame-pointer', f'-I{path}/libffi/include']
 
     if not os.path.exists(f'{path}/sdl2'):
         raise RuntimeError('sdl2 needs to be installed using Homebrew.')

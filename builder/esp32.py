@@ -581,7 +581,7 @@ def parse_args(extra_args, lv_cflags, brd):
     return extra_args, lv_cflags, board
 
 
-mpy_cross_cmd = ['make', '-C', 'lib/micropython/mpy-cross']
+mpy_cross_cmd = ['make', '-C', 'lib/micropython/mpy-cross', 'CFLAGS_EXTRA="-fomit-frame-pointer"']
 esp_cmd = [
     'make',
     '',

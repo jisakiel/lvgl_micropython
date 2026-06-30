@@ -460,7 +460,7 @@ def compile(*args):  # NOQA
 
 def mpy_cross():
     _cmd = [
-        'make -C lib/micropython/mpy-cross'
+        'make -C lib/micropython/mpy-cross CFLAGS_EXTRA="-fomit-frame-pointer"'
     ]
 
     res, _ = spawn(_cmd, cmpl=True)
