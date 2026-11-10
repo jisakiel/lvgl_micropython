@@ -4,6 +4,7 @@
 
 from micropython import const  # NOQA
 import pointer_framework
+import lvgl as lv  # NOQA - used for a default argument below
 
 
 # Constants
