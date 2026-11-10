@@ -148,7 +148,9 @@ void spi_bus_fast_copy_task(void *self_in) {
         spi_bus_fast_lock_acquire(&self->copy_lock, -1);
         
         
-        if (self->partial_buf == NULL) break;
+        // Woken with no area: wait again. Leaving the loop would return from the task, which panics;
+        // only spi_fast_del ends it (vTaskDelete).
+        if (self->partial_buf == NULL) continue;
         
         // Read ALL variables under lock protection atomically
         // This prevents race conditions where coordinates might change 
@@ -167,56 +169,29 @@ void spi_bus_fast_copy_task(void *self_in) {
         
         // Copy partial data to full buffer (analog of copy_pixels) with ATOMIC coordinates
         copy_partial_to_full_buffer(self, x_start, y_start, x_end, y_end);
-        
-        // Release tx_color_lock AFTER reading last_update and copying (like RGB)
+
+        // Done with this area: cleared here, before tx_color_lock is given back. It was cleared at the
+        // end of the loop, after the frame was sent, which wiped the next area if LVGL handed it over
+        // during the send: the task then woke to NULL, left the loop and returned (a panic).
+        self->partial_buf = NULL;
+
+        // Release tx_color_lock AFTER reading last_update and copying (like RGB). spi_fast_tx_color
+        // waits for this, then calls the flush-ready callback itself, in MicroPython's own thread.
+        // It used to be called from here, from this task, without the GIL: while LVGL ran Python
+        // in the main thread (a touch handler, say), both ran at once and the board crashed after
+        // a few touches.
         spi_bus_fast_lock_release(&self->tx_color_lock);
-        
-        // Callback like in RGB
-        if (self->callback != mp_const_none) {
-            volatile uint32_t sp = (uint32_t)esp_cpu_get_sp();
-            void *old_state = mp_thread_get_state();
-            mp_state_thread_t ts;
-            mp_thread_set_state(&ts);
-            mp_stack_set_top((void*)sp);
-            mp_stack_set_limit(CONFIG_FREERTOS_IDLE_TASK_STACKSIZE - 1024);
-            mp_locals_set(mp_state_ctx.thread.dict_locals);
-            mp_globals_set(mp_state_ctx.thread.dict_globals);
-            mp_sched_lock();
-            gc_lock();
-            nlr_buf_t nlr;
-            if (nlr_push(&nlr) == 0) {
-                mp_call_function_n_kw(self->callback, 0, 0, NULL);
-                nlr_pop();
-            } else {
-                mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
-            }
-            gc_unlock();
-            mp_sched_unlock();
-            mp_thread_set_state(old_state);
-        }
-        
+
         // Send full buffer only on last update (like RGB driver)
         if (last_update) {
             send_full_buffer_chunked(self, 0x32002C00, 0x32003C00);
-            
-            // FIRST FRAME STRATEGY: initialize both buffers with same content
-            if (!self->first_frame_received) {
-                // First full frame - copy it to active_fb, then to idle_fb
-                uint32_t total_size = self->width * self->height * self->bytes_per_pixel;
-                memcpy(self->active_fb, self->idle_fb, total_size);  // active_fb = idle_fb (accumulated frame)
-                memcpy(self->idle_fb, self->active_fb, total_size);  // idle_fb = active_fb (same frame)
-                self->first_frame_received = 1;
-                // ets_printf("FIRST_FRAME: initialized both buffers with full frame\n");
-            } else {
-                // Normal simple swap like RGB driver
-                uint8_t *temp = self->active_fb;
-                self->active_fb = self->idle_fb;
-                self->idle_fb = temp;
-                // ets_printf("SIMPLE_SWAP: active <-> idle\n");
-            }
+            // No swap with active_fb (as the RGB driver does): the next frame's areas must be copied
+            // onto this one. Swapped, they landed on the frame from two updates back, and whatever
+            // changed only in the frame before reappeared (a dragged object left copies behind). The
+            // panel keeps the picture in its own memory, and this task sends a frame before it copies
+            // the next areas, so one frame is enough.
         }
-        
-        self->partial_buf = NULL;
+
         exit = spi_bus_fast_event_isset(&self->copy_task_exit);
     }
 }

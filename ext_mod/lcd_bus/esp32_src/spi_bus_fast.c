@@ -479,7 +479,16 @@ mp_lcd_err_t spi_fast_tx_color(mp_obj_t obj, int lcd_cmd, void *color, size_t co
     
     // Release copy_lock to wake up copy task
     spi_bus_fast_lock_release(&self->copy_lock);
-    
+
+    // Wait until the task has copied the area (it gives tx_color_lock back then), so LVGL's buffer
+    // is free again, and tell LVGL from here: this runs in MicroPython's thread, holding the GIL.
+    // The frame is still sent by the task, in the background.
+    spi_bus_fast_lock_acquire(&self->tx_color_lock, -1);
+    spi_bus_fast_lock_release(&self->tx_color_lock);
+    if (self->callback != mp_const_none) {
+        mp_call_function_n_kw(self->callback, 0, 0, NULL);
+    }
+
     return LCD_OK;
 }
 
