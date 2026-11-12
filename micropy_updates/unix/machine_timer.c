@@ -77,6 +77,11 @@ static void *timer_poll_thread(void *arg)
 
 void machine_timer_deinit_all(void)
 {
+    // No timer was ever made: there is no thread to join (joining thread id 0 crashes glibc)
+    if (!timer_polling) {
+        return;
+    }
+
     // Disable, deallocate and remove all timers from list
     machine_timer_obj_t *timer;
     pthread_mutex_lock(&timer_lock);
@@ -140,10 +145,8 @@ static mp_obj_t machine_timer_make_new(const mp_obj_type_t *type, size_t n_args,
     if (!timer_polling) {
         pthread_mutex_init(&timer_lock, NULL);
         timer_polling = true;
-        pthread_attr_t attr;
-        pthread_attr_init(&attr);
-        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        pthread_create(&timer_poll_thread_id, &attr, &timer_poll_thread, NULL);
+        // joinable, so machine_timer_deinit_all can wait for it to stop
+        pthread_create(&timer_poll_thread_id, NULL, &timer_poll_thread, NULL);
     }
 
     int16_t mode = (int16_t)args[ARG_mode].u_int;
